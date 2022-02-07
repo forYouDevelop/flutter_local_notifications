@@ -295,10 +295,11 @@ public class FlutterLocalNotificationsPlugin
         builder.setSmallIcon(getDrawableResourceId(context, notificationDetails.icon));
       } else {
         SharedPreferences sharedPreferences =
-                context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
+            context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
         String defaultIcon = sharedPreferences.getString(DEFAULT_ICON, null);
         if (StringUtils.isNullOrEmpty(defaultIcon)) {
-          // for backwards compatibility: this is for handling the old way references to the icon used
+          // for backwards compatibility: this is for handling the old way references to the icon
+          // used
           // to be kept but should be removed in future
           builder.setSmallIcon(notificationDetails.iconResourceId);
 
