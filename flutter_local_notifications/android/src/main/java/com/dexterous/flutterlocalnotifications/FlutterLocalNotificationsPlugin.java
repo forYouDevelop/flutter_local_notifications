@@ -101,6 +101,8 @@ public class FlutterLocalNotificationsPlugin
   private static final String CREATE_NOTIFICATION_CHANNEL_METHOD = "createNotificationChannel";
   private static final String DELETE_NOTIFICATION_CHANNEL_METHOD = "deleteNotificationChannel";
   private static final String GET_ACTIVE_NOTIFICATIONS_METHOD = "getActiveNotifications";
+  private static final String GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_METHOD =
+      "getActiveNotificationMessagingStyle";
   private static final String GET_NOTIFICATION_CHANNELS_METHOD = "getNotificationChannels";
   private static final String START_FOREGROUND_SERVICE = "startForegroundService";
   private static final String STOP_FOREGROUND_SERVICE = "stopForegroundService";
@@ -126,6 +128,8 @@ public class FlutterLocalNotificationsPlugin
       "GET_ACTIVE_NOTIFICATIONS_ERROR_CODE";
   private static final String GET_ACTIVE_NOTIFICATIONS_ERROR_MESSAGE =
       "Android version must be 6.0 or newer to use getActiveNotifications";
+  private static final String GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE =
+      "GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE";
   private static final String GET_NOTIFICATION_CHANNELS_ERROR_CODE =
       "GET_NOTIFICATION_CHANNELS_ERROR_CODE";
   private static final String INVALID_LED_DETAILS_ERROR_MESSAGE =
@@ -145,7 +149,6 @@ public class FlutterLocalNotificationsPlugin
   private MethodChannel channel;
   private Context applicationContext;
   private Activity mainActivity;
-  private Intent launchIntent;
 
   @SuppressWarnings("deprecation")
   public static void registerWith(io.flutter.plugin.common.PluginRegistry.Registrar registrar) {
@@ -220,6 +223,10 @@ public class FlutterLocalNotificationsPlugin
       builder.setColor(notificationDetails.color.intValue());
     }
 
+    if (notificationDetails.colorized != null) {
+      builder.setColorized(notificationDetails.colorized);
+    }
+
     if (notificationDetails.showWhen != null) {
       builder.setShowWhen(BooleanUtils.getValue(notificationDetails.showWhen));
     }
@@ -242,6 +249,10 @@ public class FlutterLocalNotificationsPlugin
 
     if (!StringUtils.isNullOrEmpty(notificationDetails.subText)) {
       builder.setSubText(notificationDetails.subText);
+    }
+
+    if (notificationDetails.number != null) {
+      builder.setNumber(notificationDetails.number);
     }
 
     setVisibility(notificationDetails, builder);
@@ -346,26 +357,7 @@ public class FlutterLocalNotificationsPlugin
     SharedPreferences sharedPreferences =
         context.getSharedPreferences(SCHEDULED_NOTIFICATIONS, Context.MODE_PRIVATE);
     SharedPreferences.Editor editor = sharedPreferences.edit();
-    editor.putString(SCHEDULED_NOTIFICATIONS, json);
-    tryCommittingInBackground(editor, 3);
-  }
-
-  private static void tryCommittingInBackground(
-      final SharedPreferences.Editor editor, final int tries) {
-    if (tries == 0) {
-      return;
-    }
-    new Thread(
-            new Runnable() {
-              @Override
-              public void run() {
-                final boolean isCommitted = editor.commit();
-                if (!isCommitted) {
-                  tryCommittingInBackground(editor, tries - 1);
-                }
-              }
-            })
-        .start();
+    editor.putString(SCHEDULED_NOTIFICATIONS, json).apply();
   }
 
   static void removeNotificationFromCache(Context context, Integer notificationId) {
@@ -1186,9 +1178,6 @@ public class FlutterLocalNotificationsPlugin
 
   private void setActivity(Activity flutterActivity) {
     this.mainActivity = flutterActivity;
-    if (mainActivity != null) {
-      launchIntent = mainActivity.getIntent();
-    }
   }
 
   private void onAttachedToEngine(Context context, BinaryMessenger binaryMessenger) {
@@ -1209,7 +1198,6 @@ public class FlutterLocalNotificationsPlugin
   public void onAttachedToActivity(ActivityPluginBinding binding) {
     binding.addOnNewIntentListener(this);
     mainActivity = binding.getActivity();
-    launchIntent = mainActivity.getIntent();
   }
 
   @Override
@@ -1289,6 +1277,9 @@ public class FlutterLocalNotificationsPlugin
         break;
       case GET_ACTIVE_NOTIFICATIONS_METHOD:
         getActiveNotifications(result);
+        break;
+      case GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_METHOD:
+        getActiveNotificationMessagingStyle(call, result);
         break;
       case GET_NOTIFICATION_CHANNELS_METHOD:
         getNotificationChannels(result);
@@ -1372,14 +1363,18 @@ public class FlutterLocalNotificationsPlugin
   private void getNotificationAppLaunchDetails(Result result) {
     Map<String, Object> notificationAppLaunchDetails = new HashMap<>();
     String payload = null;
-    Boolean notificationLaunchedApp =
-        mainActivity != null
-            && SELECT_NOTIFICATION.equals(mainActivity.getIntent().getAction())
-            && !launchedActivityFromHistory(mainActivity.getIntent());
-    notificationAppLaunchDetails.put(NOTIFICATION_LAUNCHED_APP, notificationLaunchedApp);
-    if (notificationLaunchedApp) {
-      payload = launchIntent.getStringExtra(PAYLOAD);
+    Boolean notificationLaunchedApp = false;
+    if (mainActivity != null) {
+      Intent launchIntent = mainActivity.getIntent();
+      notificationLaunchedApp =
+          launchIntent != null
+              && SELECT_NOTIFICATION.equals(launchIntent.getAction())
+              && !launchedActivityFromHistory(launchIntent);
+      if (notificationLaunchedApp) {
+        payload = launchIntent.getStringExtra(PAYLOAD);
+      }
     }
+    notificationAppLaunchDetails.put(NOTIFICATION_LAUNCHED_APP, notificationLaunchedApp);
     notificationAppLaunchDetails.put(PAYLOAD, payload);
     result.success(notificationAppLaunchDetails);
   }
@@ -1397,8 +1392,7 @@ public class FlutterLocalNotificationsPlugin
     SharedPreferences sharedPreferences =
         applicationContext.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
     SharedPreferences.Editor editor = sharedPreferences.edit();
-    editor.putString(DEFAULT_ICON, defaultIcon);
-    tryCommittingInBackground(editor, 3);
+    editor.putString(DEFAULT_ICON, defaultIcon).apply();
     result.success(true);
   }
 
@@ -1616,6 +1610,7 @@ public class FlutterLocalNotificationsPlugin
         }
 
         activeNotificationPayload.put("groupKey", notification.getGroup());
+        activeNotificationPayload.put("tag", activeNotification.getTag());
         activeNotificationPayload.put(
             "title", notification.extras.getCharSequence("android.title"));
         activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
@@ -1625,6 +1620,109 @@ public class FlutterLocalNotificationsPlugin
     } catch (Throwable e) {
       result.error(GET_ACTIVE_NOTIFICATIONS_ERROR_CODE, e.getMessage(), e.getStackTrace());
     }
+  }
+
+  private void getActiveNotificationMessagingStyle(MethodCall call, Result result) {
+    if (VERSION.SDK_INT < VERSION_CODES.M) {
+      result.error(
+          GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE,
+          "Android version must be 6.0 or newer to use getActiveNotificationMessagingStyle",
+          null);
+      return;
+    }
+    NotificationManager notificationManager =
+        (NotificationManager) applicationContext.getSystemService(Context.NOTIFICATION_SERVICE);
+    try {
+      Map<String, Object> arguments = call.arguments();
+      int id = (int) arguments.get("id");
+      String tag = (String) arguments.get("tag");
+
+      StatusBarNotification[] activeNotifications = notificationManager.getActiveNotifications();
+      Notification notification = null;
+      for (StatusBarNotification activeNotification : activeNotifications) {
+        if (activeNotification.getId() == id
+            && (tag == null || tag.equals(activeNotification.getTag()))) {
+          notification = activeNotification.getNotification();
+          break;
+        }
+      }
+
+      if (notification == null) {
+        result.success(null);
+        return;
+      }
+
+      NotificationCompat.MessagingStyle messagingStyle =
+          NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification);
+      if (messagingStyle == null) {
+        result.success(null);
+        return;
+      }
+
+      HashMap<String, Object> stylePayload = new HashMap<>();
+      stylePayload.put("groupConversation", messagingStyle.isGroupConversation());
+      stylePayload.put("person", describePerson(messagingStyle.getUser()));
+      stylePayload.put("conversationTitle", messagingStyle.getConversationTitle());
+
+      List<Map<String, Object>> messagesPayload = new ArrayList<>();
+      for (NotificationCompat.MessagingStyle.Message msg : messagingStyle.getMessages()) {
+        Map<String, Object> msgPayload = new HashMap<>();
+        msgPayload.put("text", msg.getText());
+        msgPayload.put("timestamp", msg.getTimestamp());
+        msgPayload.put("person", describePerson(msg.getPerson()));
+        messagesPayload.add(msgPayload);
+      }
+      stylePayload.put("messages", messagesPayload);
+
+      result.success(stylePayload);
+    } catch (Throwable e) {
+      result.error(GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE, e.getMessage(), e.getStackTrace());
+    }
+  }
+
+  private Map<String, Object> describePerson(Person person) {
+    if (person == null) {
+      return null;
+    }
+    Map<String, Object> payload = new HashMap<>();
+    payload.put("key", person.getKey());
+    payload.put("name", person.getName());
+    payload.put("uri", person.getUri());
+    payload.put("bot", person.isBot());
+    payload.put("important", person.isImportant());
+    payload.put("icon", describeIcon(person.getIcon()));
+    return payload;
+  }
+
+  private Map<String, Object> describeIcon(IconCompat icon) {
+    if (icon == null) {
+      return null;
+    }
+    IconSource source;
+    Object data;
+    switch (icon.getType()) {
+      case IconCompat.TYPE_RESOURCE:
+        source = IconSource.DrawableResource;
+        int resId = icon.getResId();
+        Context context = applicationContext;
+        assert (context.getResources().getResourceTypeName(resId).equals(DRAWABLE));
+        assert (context
+            .getResources()
+            .getResourcePackageName(resId)
+            .equals(context.getPackageName()));
+        data = context.getResources().getResourceEntryName(resId);
+        break;
+      case IconCompat.TYPE_URI:
+        source = IconSource.ContentUri;
+        data = icon.getUri().toString();
+        break;
+      default:
+        return null;
+    }
+    Map<String, Object> payload = new HashMap<>();
+    payload.put("source", source.ordinal());
+    payload.put("data", data);
+    return payload;
   }
 
   private void getNotificationChannels(Result result) {

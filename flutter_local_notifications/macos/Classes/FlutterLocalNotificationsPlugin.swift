@@ -47,6 +47,8 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
     enum DateTimeComponents: Int {
         case time
         case dayOfWeekAndTime
+        case dayOfMonthAndTime
+        case dateAndTime
     }
 
     enum RepeatInterval: Int {
@@ -83,6 +85,9 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
 
     @available(OSX 10.14, *)
     public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if !isAFlutterLocalNotification(userInfo: notification.request.content.userInfo) {
+            return
+        }
         var options: UNNotificationPresentationOptions = []
         let presentAlert = notification.request.content.userInfo[MethodCallArguments.presentAlert] as! Bool
         let presentSound = notification.request.content.userInfo[MethodCallArguments.presentSound] as! Bool
@@ -101,6 +106,9 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
 
     @available(OSX 10.14, *)
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if !isAFlutterLocalNotification(userInfo: response.notification.request.content.userInfo) {
+            return
+        }
         let payload = response.notification.request.content.userInfo[MethodCallArguments.payload] as? String
         if initialized {
             handleSelectNotification(payload: payload)
@@ -111,7 +119,7 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
     }
 
     public func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
-        if notification.activationType == .contentsClicked {
+        if notification.activationType == .contentsClicked && notification.userInfo != nil && isAFlutterLocalNotification(userInfo: notification.userInfo!) {
             handleSelectNotification(payload: notification.userInfo![MethodCallArguments.payload] as? String)
         }
     }
@@ -165,10 +173,10 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
     func requestPermissions(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         if #available(OSX 10.14, *) {
             let arguments = call.arguments as! [String: AnyObject]
-            let requestedAlertPermission = arguments[MethodCallArguments.alert] as! Bool
-            let requestedSoundPermission = arguments[MethodCallArguments.sound] as! Bool
-            let requestedBadgePermission = arguments[MethodCallArguments.badge] as! Bool
-            requestPermissionsImpl(soundPermission: requestedSoundPermission, alertPermission: requestedAlertPermission, badgePermission: requestedBadgePermission, result: result)
+            let requestedAlertPermission = arguments[MethodCallArguments.alert] as? Bool
+            let requestedSoundPermission = arguments[MethodCallArguments.sound] as? Bool
+            let requestedBadgePermission = arguments[MethodCallArguments.badge] as? Bool
+            requestPermissionsImpl(soundPermission: requestedSoundPermission ?? false, alertPermission: requestedAlertPermission ?? false, badgePermission: requestedBadgePermission ?? false, result: result)
         } else {
             result(nil)
         }
@@ -292,6 +300,10 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
                     notification.deliveryRepeatInterval = DateComponents.init(day: 1)
                 case .dayOfWeekAndTime:
                     notification.deliveryRepeatInterval = DateComponents.init(weekOfYear: 1)
+                case .dayOfMonthAndTime:
+                    notification.deliveryRepeatInterval = DateComponents.init(month: 1)
+                case .dateAndTime:
+                    notification.deliveryRepeatInterval = DateComponents.init(year: 1)
                 }
             }
             NSUserNotificationCenter.default.scheduleNotification(notification)
@@ -412,6 +424,12 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
             case .dayOfWeekAndTime:
                 let dateComponents = calendar.dateComponents([ .weekday, .hour, .minute, .second, .timeZone], from: date)
                 return UNCalendarNotificationTrigger.init(dateMatching: dateComponents, repeats: true)
+            case .dayOfMonthAndTime:
+                let dateComponents = calendar.dateComponents([ .day, .hour, .minute, .second, .timeZone], from: date)
+                return UNCalendarNotificationTrigger.init(dateMatching: dateComponents, repeats: true)
+            case .dateAndTime:
+                let dateComponents = calendar.dateComponents([ .day, .month, .hour, .minute, .second, .timeZone], from: date)
+                return UNCalendarNotificationTrigger.init(dateMatching: dateComponents, repeats: true)
             }
         }
         let dateComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second, .timeZone], from: date)
@@ -492,5 +510,11 @@ public class FlutterLocalNotificationsPlugin: NSObject, FlutterPlugin, UNUserNot
 
     func handleSelectNotification(payload: String?) {
         channel.invokeMethod("selectNotification", arguments: payload)
+    }
+
+    func isAFlutterLocalNotification(userInfo: [AnyHashable: Any]) -> Bool {
+        return userInfo[MethodCallArguments.presentAlert] != nil &&
+        userInfo[MethodCallArguments.presentSound] != nil &&
+        userInfo[MethodCallArguments.presentBadge] != nil && userInfo[MethodCallArguments.payload] != nil
     }
 }
