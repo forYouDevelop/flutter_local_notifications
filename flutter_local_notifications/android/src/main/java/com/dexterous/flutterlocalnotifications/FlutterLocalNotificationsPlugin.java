@@ -973,13 +973,11 @@ public class FlutterLocalNotificationsPlugin
             new NotificationChannel(
                 notificationChannelDetails.id,
                 notificationChannelDetails.name,
-                notificationChannelDetails.importance != null
-                    ? notificationChannelDetails.importance
-                    : NotificationManager.IMPORTANCE_HIGH);
+                    NotificationManager.IMPORTANCE_HIGH);
         notificationChannel.setDescription(notificationChannelDetails.description);
         notificationChannel.setGroup(notificationChannelDetails.groupId);
         if (notificationChannelDetails.playSound) {
-          Integer audioAttributesUsage =
+          int audioAttributesUsage =
               notificationChannelDetails.audioAttributesUsage != null
                   ? notificationChannelDetails.audioAttributesUsage
                   : AudioAttributes.USAGE_NOTIFICATION;
