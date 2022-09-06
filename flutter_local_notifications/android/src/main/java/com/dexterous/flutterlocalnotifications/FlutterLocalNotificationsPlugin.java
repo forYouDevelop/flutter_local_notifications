@@ -973,7 +973,7 @@ public class FlutterLocalNotificationsPlugin
             new NotificationChannel(
                 notificationChannelDetails.id,
                 notificationChannelDetails.name,
-                    NotificationManager.IMPORTANCE_HIGH);
+                NotificationManager.IMPORTANCE_HIGH);
         notificationChannel.setDescription(notificationChannelDetails.description);
         notificationChannel.setGroup(notificationChannelDetails.groupId);
         if (notificationChannelDetails.playSound) {
