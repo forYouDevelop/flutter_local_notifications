@@ -1,6 +1,7 @@
 package com.dexterous.flutterlocalnotifications;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.Notification;
@@ -21,20 +22,34 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
+import android.os.Bundle;
 import android.service.notification.StatusBarNotification;
 import android.text.Html;
+import android.text.Spannable;
+import android.text.SpannableString;
 import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
-import androidx.core.app.*;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.AlarmManagerCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationCompat.Action.Builder;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.app.Person;
+import androidx.core.app.RemoteInput;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.drawable.IconCompat;
 
+import com.dexterous.flutterlocalnotifications.isolate.IsolatePreferences;
 import com.dexterous.flutterlocalnotifications.models.BitmapSource;
 import com.dexterous.flutterlocalnotifications.models.DateTimeComponents;
 import com.dexterous.flutterlocalnotifications.models.IconSource;
 import com.dexterous.flutterlocalnotifications.models.MessageDetails;
+import com.dexterous.flutterlocalnotifications.models.NotificationAction;
+import com.dexterous.flutterlocalnotifications.models.NotificationAction.NotificationActionInput;
 import com.dexterous.flutterlocalnotifications.models.NotificationChannelAction;
 import com.dexterous.flutterlocalnotifications.models.NotificationChannelDetails;
 import com.dexterous.flutterlocalnotifications.models.NotificationChannelGroupDetails;
@@ -49,11 +64,11 @@ import com.dexterous.flutterlocalnotifications.models.styles.InboxStyleInformati
 import com.dexterous.flutterlocalnotifications.models.styles.MessagingStyleInformation;
 import com.dexterous.flutterlocalnotifications.models.styles.StyleInformation;
 import com.dexterous.flutterlocalnotifications.utils.BooleanUtils;
+import com.dexterous.flutterlocalnotifications.utils.LongUtils;
 import com.dexterous.flutterlocalnotifications.utils.StringUtils;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import com.jakewharton.threetenabp.AndroidThreeTen;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -75,7 +90,6 @@ import io.flutter.embedding.engine.loader.FlutterLoader;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
-import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -96,12 +110,21 @@ public class FlutterLocalNotificationsPlugin
         PluginRegistry.RequestPermissionsResultListener,
         FlutterPlugin,
         ActivityAware {
+
+  static final String PAYLOAD = "payload";
+  static final String NOTIFICATION_ID = "notificationId";
+  static final String CANCEL_NOTIFICATION = "cancelNotification";
   private static final String SHARED_PREFERENCES_KEY = "notification_plugin_cache";
+  private static final String DISPATCHER_HANDLE = "dispatcher_handle";
+  private static final String CALLBACK_HANDLE = "callback_handle";
   private static final String DRAWABLE = "drawable";
   private static final String DEFAULT_ICON = "defaultIcon";
   private static final String SELECT_NOTIFICATION = "SELECT_NOTIFICATION";
+  private static final String SELECT_FOREGROUND_NOTIFICATION_ACTION =
+      "SELECT_FOREGROUND_NOTIFICATION";
   private static final String SCHEDULED_NOTIFICATIONS = "scheduled_notifications";
   private static final String INITIALIZE_METHOD = "initialize";
+  private static final String GET_CALLBACK_HANDLE_METHOD = "getCallbackHandle";
   private static final String ARE_NOTIFICATIONS_ENABLED_METHOD = "areNotificationsEnabled";
   private static final String CREATE_NOTIFICATION_CHANNEL_GROUP_METHOD =
       "createNotificationChannelGroup";
@@ -109,13 +132,13 @@ public class FlutterLocalNotificationsPlugin
       "deleteNotificationChannelGroup";
   private static final String CREATE_NOTIFICATION_CHANNEL_METHOD = "createNotificationChannel";
   private static final String DELETE_NOTIFICATION_CHANNEL_METHOD = "deleteNotificationChannel";
-  private static final String GET_ACTIVE_NOTIFICATIONS_METHOD = "getActiveNotifications";
   private static final String GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_METHOD =
       "getActiveNotificationMessagingStyle";
   private static final String GET_NOTIFICATION_CHANNELS_METHOD = "getNotificationChannels";
   private static final String START_FOREGROUND_SERVICE = "startForegroundService";
   private static final String STOP_FOREGROUND_SERVICE = "stopForegroundService";
   private static final String PENDING_NOTIFICATION_REQUESTS_METHOD = "pendingNotificationRequests";
+  private static final String GET_ACTIVE_NOTIFICATIONS_METHOD = "getActiveNotifications";
   private static final String SHOW_METHOD = "show";
   private static final String CANCEL_METHOD = "cancel";
   private static final String CANCEL_ALL_METHOD = "cancelAll";
@@ -128,20 +151,17 @@ public class FlutterLocalNotificationsPlugin
       "getNotificationAppLaunchDetails";
   private static final String REQUEST_PERMISSION_METHOD = "requestPermission";
   private static final String METHOD_CHANNEL = "dexterous.com/flutter/local_notifications";
-  private static final String PAYLOAD = "payload";
-  private static final String INVALID_ICON_ERROR_CODE = "INVALID_ICON";
-  private static final String INVALID_LARGE_ICON_ERROR_CODE = "INVALID_LARGE_ICON";
-  private static final String INVALID_BIG_PICTURE_ERROR_CODE = "INVALID_BIG_PICTURE";
-  private static final String INVALID_SOUND_ERROR_CODE = "INVALID_SOUND";
-  private static final String INVALID_LED_DETAILS_ERROR_CODE = "INVALID_LED_DETAILS";
-  private static final String GET_ACTIVE_NOTIFICATIONS_ERROR_CODE =
-      "GET_ACTIVE_NOTIFICATIONS_ERROR_CODE";
+  private static final String INVALID_ICON_ERROR_CODE = "invalid_icon";
+  private static final String INVALID_LARGE_ICON_ERROR_CODE = "invalid_large_icon";
+  private static final String INVALID_BIG_PICTURE_ERROR_CODE = "invalid_big_picture";
+  private static final String INVALID_SOUND_ERROR_CODE = "invalid_sound";
+  private static final String INVALID_LED_DETAILS_ERROR_CODE = "invalid_led_details";
+  private static final String UNSUPPORTED_OS_VERSION_ERROR_CODE = "unsupported_os_version";
   private static final String GET_ACTIVE_NOTIFICATIONS_ERROR_MESSAGE =
       "Android version must be 6.0 or newer to use getActiveNotifications";
-  private static final String GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE =
-      "GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE";
-  private static final String GET_NOTIFICATION_CHANNELS_ERROR_CODE =
-      "GET_NOTIFICATION_CHANNELS_ERROR_CODE";
+  private static final String GET_NOTIFICATION_CHANNELS_ERROR_CODE = "getNotificationChannelsError";
+  private static final String GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_ERROR_CODE =
+      "getActiveNotificationMessagingStyleError";
   private static final String INVALID_LED_DETAILS_ERROR_MESSAGE =
       "Must specify both ledOnMs and ledOffMs to configure the blink cycle on older versions of"
           + " Android before Oreo";
@@ -152,29 +172,26 @@ public class FlutterLocalNotificationsPlugin
   private static final String INVALID_RAW_RESOURCE_ERROR_MESSAGE =
       "The resource %s could not be found. Please make sure it has been added as a raw resource to"
           + " your Android head project.";
+  private static final String PERMISSION_REQUEST_IN_PROGRESS_ERROR_CODE =
+      "permissionRequestInProgress";
+  private static final String PERMISSION_REQUEST_IN_PROGRESS_ERROR_MESSAGE =
+      "Another permission request is already in progress";
   private static final String CANCEL_ID = "id";
   private static final String CANCEL_TAG = "tag";
+  private static final String ACTION_ID = "actionId";
+  private static final String INPUT_RESULT = "FlutterLocalNotificationsPluginInputResult";
+  private static final String INPUT = "input";
+  private static final String NOTIFICATION_RESPONSE_TYPE = "notificationResponseType";
   static String NOTIFICATION_DETAILS = "notificationDetails";
   static Gson gson;
   private MethodChannel channel;
   private Context applicationContext;
   private Activity mainActivity;
-  private Intent launchIntent;
   static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 1;
   private PermissionRequestListener callback;
   private boolean permissionRequestInProgress = false;
 
-  @SuppressWarnings("deprecation")
-  public static void registerWith(io.flutter.plugin.common.PluginRegistry.Registrar registrar) {
-    FlutterLocalNotificationsPlugin plugin = new FlutterLocalNotificationsPlugin();
-    plugin.setActivity(registrar.activity());
-    registrar.addNewIntentListener(plugin);
-    registrar.addRequestPermissionsResultListener(plugin);
-    plugin.onAttachedToEngine(registrar.context(), registrar.messenger());
-  }
-
   static void rescheduleNotifications(Context context) {
-    initAndroidThreeTen(context);
     ArrayList<NotificationDetails> scheduledNotifications = loadScheduledNotifications(context);
     for (NotificationDetails scheduledNotification : scheduledNotifications) {
       if (scheduledNotification.repeatInterval == null) {
@@ -189,12 +206,6 @@ public class FlutterLocalNotificationsPlugin
     }
   }
 
-  private static void initAndroidThreeTen(Context context) {
-    if (VERSION.SDK_INT < VERSION_CODES.O) {
-      AndroidThreeTen.init(context);
-    }
-  }
-
   protected static Notification createNotification(
       Context context, NotificationDetails notificationDetails) {
     NotificationChannelDetails notificationChannelDetails =
@@ -204,6 +215,7 @@ public class FlutterLocalNotificationsPlugin
     }
     Intent intent = getLaunchIntent(context);
     intent.setAction(SELECT_NOTIFICATION);
+    intent.putExtra(NOTIFICATION_ID, notificationDetails.id);
     intent.putExtra(PAYLOAD, notificationDetails.payload);
     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
     if (VERSION.SDK_INT >= VERSION_CODES.M) {
@@ -230,6 +242,87 @@ public class FlutterLocalNotificationsPlugin
             .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
             .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
 
+    if (notificationDetails.actions != null) {
+      // Space out request codes by 16 so even with 16 actions they won't clash
+      int requestCode = notificationDetails.id * 16;
+      for (NotificationAction action : notificationDetails.actions) {
+        IconCompat icon = null;
+        if (!TextUtils.isEmpty(action.icon) && action.iconSource != null) {
+          icon = getIconFromSource(context, action.icon, action.iconSource);
+        }
+
+        Intent actionIntent;
+        if (action.showsUserInterface != null && action.showsUserInterface) {
+          actionIntent = getLaunchIntent(context);
+          actionIntent.setAction(SELECT_FOREGROUND_NOTIFICATION_ACTION);
+        } else {
+          actionIntent = new Intent(context, ActionBroadcastReceiver.class);
+          actionIntent.setAction(ActionBroadcastReceiver.ACTION_TAPPED);
+        }
+
+        actionIntent
+            .putExtra(NOTIFICATION_ID, notificationDetails.id)
+            .putExtra(ACTION_ID, action.id)
+            .putExtra(CANCEL_NOTIFICATION, action.cancelNotification)
+            .putExtra(PAYLOAD, notificationDetails.payload);
+        int actionFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (action.actionInputs == null || action.actionInputs.isEmpty()) {
+          if (VERSION.SDK_INT >= VERSION_CODES.M) {
+            actionFlags |= PendingIntent.FLAG_IMMUTABLE;
+          }
+        } else {
+          if (VERSION.SDK_INT >= VERSION_CODES.S) {
+            actionFlags |= PendingIntent.FLAG_MUTABLE;
+          }
+        }
+
+        @SuppressLint("UnspecifiedImmutableFlag")
+        final PendingIntent actionPendingIntent =
+            action.showsUserInterface != null && action.showsUserInterface
+                ? PendingIntent.getActivity(context, requestCode++, actionIntent, actionFlags)
+                : PendingIntent.getBroadcast(context, requestCode++, actionIntent, actionFlags);
+
+        final Spannable actionTitleSpannable = new SpannableString(action.title);
+        if (action.titleColor != null) {
+          actionTitleSpannable.setSpan(
+              new ForegroundColorSpan(action.titleColor), 0, actionTitleSpannable.length(), 0);
+        }
+
+        Builder actionBuilder = new Builder(icon, actionTitleSpannable, actionPendingIntent);
+
+        if (action.contextual != null) {
+          actionBuilder.setContextual(action.contextual);
+        }
+        if (action.showsUserInterface != null) {
+          actionBuilder.setShowsUserInterface(action.showsUserInterface);
+        }
+        if (action.allowGeneratedReplies != null) {
+          actionBuilder.setAllowGeneratedReplies(action.allowGeneratedReplies);
+        }
+
+        if (action.actionInputs != null) {
+          for (NotificationActionInput input : action.actionInputs) {
+            RemoteInput.Builder remoteInput =
+                new RemoteInput.Builder(INPUT_RESULT).setLabel(input.label);
+            if (input.allowFreeFormInput != null) {
+              remoteInput.setAllowFreeFormInput(input.allowFreeFormInput);
+            }
+
+            if (input.allowedMimeTypes != null) {
+              for (String mimeType : input.allowedMimeTypes) {
+                remoteInput.setAllowDataType(mimeType, true);
+              }
+            }
+            if (input.choices != null) {
+              remoteInput.setChoices(input.choices.toArray(new CharSequence[] {}));
+            }
+            actionBuilder.addRemoteInput(remoteInput.build());
+          }
+        }
+        builder.addAction(actionBuilder.build());
+      }
+    }
+
     setSmallIcon(context, notificationDetails, builder);
     builder.setLargeIcon(
         getBitmapFromSource(
@@ -252,6 +345,12 @@ public class FlutterLocalNotificationsPlugin
 
     if (notificationDetails.usesChronometer != null) {
       builder.setUsesChronometer(notificationDetails.usesChronometer);
+    }
+
+    if (notificationDetails.chronometerCountDown != null) {
+      if (VERSION.SDK_INT >= VERSION_CODES.N) {
+        builder.setChronometerCountDown(notificationDetails.chronometerCountDown);
+      }
     }
 
     if (BooleanUtils.getValue(notificationDetails.fullScreenIntent)) {
@@ -442,17 +541,12 @@ public class FlutterLocalNotificationsPlugin
         getBroadcastPendingIntent(context, notificationDetails.id, notificationIntent);
     AlarmManager alarmManager = getAlarmManager(context);
     long epochMilli =
-        VERSION.SDK_INT >= VERSION_CODES.O
-            ? ZonedDateTime.of(
-                    LocalDateTime.parse(notificationDetails.scheduledDateTime),
-                    ZoneId.of(notificationDetails.timeZoneName))
-                .toInstant()
-                .toEpochMilli()
-            : org.threeten.bp.ZonedDateTime.of(
-                    org.threeten.bp.LocalDateTime.parse(notificationDetails.scheduledDateTime),
-                    org.threeten.bp.ZoneId.of(notificationDetails.timeZoneName))
-                .toInstant()
-                .toEpochMilli();
+        ZonedDateTime.of(
+                LocalDateTime.parse(notificationDetails.scheduledDateTime),
+                ZoneId.of(notificationDetails.timeZoneName))
+            .toInstant()
+            .toEpochMilli();
+
     if (BooleanUtils.getValue(notificationDetails.allowWhileIdle)) {
       AlarmManagerCompat.setExactAndAllowWhileIdle(
           alarmManager, AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
@@ -482,12 +576,29 @@ public class FlutterLocalNotificationsPlugin
     saveScheduledNotification(context, notificationDetails);
   }
 
-  private static PendingIntent getActivityPendingIntent(Context context, int id, Intent intent) {
-    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-    if (VERSION.SDK_INT >= VERSION_CODES.M) {
-      flags |= PendingIntent.FLAG_IMMUTABLE;
+  static Map<String, Object> extractNotificationResponseMap(Intent intent) {
+    final int notificationId = intent.getIntExtra(NOTIFICATION_ID, 0);
+    final Map<String, Object> notificationResponseMap = new HashMap<>();
+    notificationResponseMap.put(NOTIFICATION_ID, notificationId);
+    notificationResponseMap.put(ACTION_ID, intent.getStringExtra(ACTION_ID));
+    notificationResponseMap.put(
+        FlutterLocalNotificationsPlugin.PAYLOAD,
+        intent.getStringExtra(FlutterLocalNotificationsPlugin.PAYLOAD));
+
+    Bundle remoteInput = RemoteInput.getResultsFromIntent(intent);
+    if (remoteInput != null) {
+      notificationResponseMap.put(INPUT, remoteInput.getString(INPUT_RESULT));
     }
-    return PendingIntent.getActivity(context, id, intent, flags);
+
+    if (SELECT_NOTIFICATION.equals(intent.getAction())) {
+      notificationResponseMap.put(NOTIFICATION_RESPONSE_TYPE, 0);
+    }
+
+    if (SELECT_FOREGROUND_NOTIFICATION_ACTION.equals(intent.getAction())) {
+      notificationResponseMap.put(NOTIFICATION_RESPONSE_TYPE, 1);
+    }
+
+    return notificationResponseMap;
   }
 
   private static PendingIntent getBroadcastPendingIntent(Context context, int id, Intent intent) {
@@ -1057,7 +1168,6 @@ public class FlutterLocalNotificationsPlugin
 
   static void zonedScheduleNextNotification(
       Context context, NotificationDetails notificationDetails) {
-    initAndroidThreeTen(context);
     String nextFireDate = getNextFireDate(notificationDetails);
     if (nextFireDate == null) {
       return;
@@ -1068,7 +1178,6 @@ public class FlutterLocalNotificationsPlugin
 
   static void zonedScheduleNextNotificationMatchingDateComponents(
       Context context, NotificationDetails notificationDetails) {
-    initAndroidThreeTen(context);
     String nextFireDate = getNextFireDateMatchingDateTimeComponents(notificationDetails);
     if (nextFireDate == null) {
       return;
@@ -1078,116 +1187,58 @@ public class FlutterLocalNotificationsPlugin
   }
 
   static String getNextFireDate(NotificationDetails notificationDetails) {
-    if (VERSION.SDK_INT >= VERSION_CODES.O) {
-      if (notificationDetails.scheduledNotificationRepeatFrequency
-          == ScheduledNotificationRepeatFrequency.Daily) {
-        LocalDateTime localDateTime =
-            LocalDateTime.parse(notificationDetails.scheduledDateTime).plusDays(1);
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
-      } else if (notificationDetails.scheduledNotificationRepeatFrequency
-          == ScheduledNotificationRepeatFrequency.Weekly) {
-        LocalDateTime localDateTime =
-            LocalDateTime.parse(notificationDetails.scheduledDateTime).plusWeeks(1);
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
-      }
-    } else {
-      if (notificationDetails.scheduledNotificationRepeatFrequency
-          == ScheduledNotificationRepeatFrequency.Daily) {
-        org.threeten.bp.LocalDateTime localDateTime =
-            org.threeten.bp.LocalDateTime.parse(notificationDetails.scheduledDateTime).plusDays(1);
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
-      } else if (notificationDetails.scheduledNotificationRepeatFrequency
-          == ScheduledNotificationRepeatFrequency.Weekly) {
-        org.threeten.bp.LocalDateTime localDateTime =
-            org.threeten.bp.LocalDateTime.parse(notificationDetails.scheduledDateTime).plusWeeks(1);
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
-      }
+    if (notificationDetails.scheduledNotificationRepeatFrequency
+        == ScheduledNotificationRepeatFrequency.Daily) {
+      LocalDateTime localDateTime =
+          LocalDateTime.parse(notificationDetails.scheduledDateTime).plusDays(1);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
+    } else if (notificationDetails.scheduledNotificationRepeatFrequency
+        == ScheduledNotificationRepeatFrequency.Weekly) {
+      LocalDateTime localDateTime =
+          LocalDateTime.parse(notificationDetails.scheduledDateTime).plusWeeks(1);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
     }
     return null;
   }
 
   static String getNextFireDateMatchingDateTimeComponents(NotificationDetails notificationDetails) {
-    if (VERSION.SDK_INT >= VERSION_CODES.O) {
-      ZoneId zoneId = ZoneId.of(notificationDetails.timeZoneName);
-      ZonedDateTime scheduledDateTime =
-          ZonedDateTime.of(LocalDateTime.parse(notificationDetails.scheduledDateTime), zoneId);
-      ZonedDateTime now = ZonedDateTime.now(zoneId);
-      ZonedDateTime nextFireDate =
-          ZonedDateTime.of(
-              now.getYear(),
-              now.getMonthValue(),
-              now.getDayOfMonth(),
-              scheduledDateTime.getHour(),
-              scheduledDateTime.getMinute(),
-              scheduledDateTime.getSecond(),
-              scheduledDateTime.getNano(),
-              zoneId);
-      while (nextFireDate.isBefore(now)) {
-        // adjust to be a date in the future that matches the time
+    ZoneId zoneId = ZoneId.of(notificationDetails.timeZoneName);
+    ZonedDateTime scheduledDateTime =
+        ZonedDateTime.of(LocalDateTime.parse(notificationDetails.scheduledDateTime), zoneId);
+    ZonedDateTime now = ZonedDateTime.now(zoneId);
+    ZonedDateTime nextFireDate =
+        ZonedDateTime.of(
+            now.getYear(),
+            now.getMonthValue(),
+            now.getDayOfMonth(),
+            scheduledDateTime.getHour(),
+            scheduledDateTime.getMinute(),
+            scheduledDateTime.getSecond(),
+            scheduledDateTime.getNano(),
+            zoneId);
+    while (nextFireDate.isBefore(now)) {
+      // adjust to be a date in the future that matches the time
+      nextFireDate = nextFireDate.plusDays(1);
+    }
+    if (notificationDetails.matchDateTimeComponents == DateTimeComponents.Time) {
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+    } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DayOfWeekAndTime) {
+      while (nextFireDate.getDayOfWeek() != scheduledDateTime.getDayOfWeek()) {
         nextFireDate = nextFireDate.plusDays(1);
       }
-      if (notificationDetails.matchDateTimeComponents == DateTimeComponents.Time) {
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents
-          == DateTimeComponents.DayOfWeekAndTime) {
-        while (nextFireDate.getDayOfWeek() != scheduledDateTime.getDayOfWeek()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents
-          == DateTimeComponents.DayOfMonthAndTime) {
-        while (nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DateAndTime) {
-        while (nextFireDate.getMonthValue() != scheduledDateTime.getMonthValue()
-            || nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      }
-    } else {
-      org.threeten.bp.ZoneId zoneId = org.threeten.bp.ZoneId.of(notificationDetails.timeZoneName);
-      org.threeten.bp.ZonedDateTime scheduledDateTime =
-          org.threeten.bp.ZonedDateTime.of(
-              org.threeten.bp.LocalDateTime.parse(notificationDetails.scheduledDateTime), zoneId);
-      org.threeten.bp.ZonedDateTime now = org.threeten.bp.ZonedDateTime.now(zoneId);
-      org.threeten.bp.ZonedDateTime nextFireDate =
-          org.threeten.bp.ZonedDateTime.of(
-              now.getYear(),
-              now.getMonthValue(),
-              now.getDayOfMonth(),
-              scheduledDateTime.getHour(),
-              scheduledDateTime.getMinute(),
-              scheduledDateTime.getSecond(),
-              scheduledDateTime.getNano(),
-              zoneId);
-      while (nextFireDate.isBefore(now)) {
-        // adjust to be a date in the future that matches the time
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+    } else if (notificationDetails.matchDateTimeComponents
+        == DateTimeComponents.DayOfMonthAndTime) {
+      while (nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
         nextFireDate = nextFireDate.plusDays(1);
       }
-      if (notificationDetails.matchDateTimeComponents == DateTimeComponents.Time) {
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents
-          == DateTimeComponents.DayOfWeekAndTime) {
-        while (nextFireDate.getDayOfWeek() != scheduledDateTime.getDayOfWeek()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents
-          == DateTimeComponents.DayOfMonthAndTime) {
-        while (nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
-      } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DateAndTime) {
-        while (nextFireDate.getMonthValue() != scheduledDateTime.getMonthValue()
-            || nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
-          nextFireDate = nextFireDate.plusDays(1);
-        }
-        return org.threeten.bp.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+    } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DateAndTime) {
+      while (nextFireDate.getMonthValue() != scheduledDateTime.getMonthValue()
+          || nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
+        nextFireDate = nextFireDate.plusDays(1);
       }
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
     }
     return null;
   }
@@ -1206,19 +1257,19 @@ public class FlutterLocalNotificationsPlugin
     this.mainActivity = flutterActivity;
   }
 
-  private void onAttachedToEngine(Context context, BinaryMessenger binaryMessenger) {
-    this.applicationContext = context;
-    this.channel = new MethodChannel(binaryMessenger, METHOD_CHANNEL);
+  @Override
+  public void onAttachedToEngine(FlutterPluginBinding binding) {
+    this.applicationContext = binding.getApplicationContext();
+    this.channel = new MethodChannel(binding.getBinaryMessenger(), METHOD_CHANNEL);
     this.channel.setMethodCallHandler(this);
   }
 
   @Override
-  public void onAttachedToEngine(FlutterPluginBinding binding) {
-    onAttachedToEngine(binding.getApplicationContext(), binding.getBinaryMessenger());
+  public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+    this.channel.setMethodCallHandler(null);
+    this.channel = null;
+    this.applicationContext = null;
   }
-
-  @Override
-  public void onDetachedFromEngine(FlutterPluginBinding binding) {}
 
   @Override
   public void onAttachedToActivity(ActivityPluginBinding binding) {
@@ -1245,10 +1296,13 @@ public class FlutterLocalNotificationsPlugin
   }
 
   @Override
-  public void onMethodCall(MethodCall call, @NonNull final Result result) {
+  public void onMethodCall(MethodCall call, @NonNull Result result) {
     switch (call.method) {
       case INITIALIZE_METHOD:
         initialize(call, result);
+        break;
+      case GET_CALLBACK_HANDLE_METHOD:
+        getCallbackHandle(result);
         break;
       case GET_NOTIFICATION_APP_LAUNCH_DETAILS_METHOD:
         getNotificationAppLaunchDetails(result);
@@ -1272,7 +1326,7 @@ public class FlutterLocalNotificationsPlugin
 
               @Override
               public void fail(String message) {
-                result.error("PERMISSION_REQUEST_IN_PROGRESS", message, null);
+                result.error(PERMISSION_REQUEST_IN_PROGRESS_ERROR_CODE, message, null);
               }
             });
         break;
@@ -1342,6 +1396,38 @@ public class FlutterLocalNotificationsPlugin
     result.success(pendingNotifications);
   }
 
+  private void getActiveNotifications(Result result) {
+    if (VERSION.SDK_INT < VERSION_CODES.M) {
+      result.error(UNSUPPORTED_OS_VERSION_ERROR_CODE, GET_ACTIVE_NOTIFICATIONS_ERROR_MESSAGE, null);
+      return;
+    }
+    NotificationManager notificationManager =
+        (NotificationManager) applicationContext.getSystemService(Context.NOTIFICATION_SERVICE);
+    try {
+      StatusBarNotification[] activeNotifications = notificationManager.getActiveNotifications();
+      List<Map<String, Object>> activeNotificationsPayload = new ArrayList<>();
+
+      for (StatusBarNotification activeNotification : activeNotifications) {
+        HashMap<String, Object> activeNotificationPayload = new HashMap<>();
+        activeNotificationPayload.put("id", activeNotification.getId());
+        Notification notification = activeNotification.getNotification();
+        if (VERSION.SDK_INT >= VERSION_CODES.O) {
+          activeNotificationPayload.put("channelId", notification.getChannelId());
+        }
+
+        activeNotificationPayload.put("tag", activeNotification.getTag());
+        activeNotificationPayload.put("groupKey", notification.getGroup());
+        activeNotificationPayload.put(
+            "title", notification.extras.getCharSequence("android.title"));
+        activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
+        activeNotificationsPayload.add(activeNotificationPayload);
+      }
+      result.success(activeNotificationsPayload);
+    } catch (Throwable e) {
+      result.error(UNSUPPORTED_OS_VERSION_ERROR_CODE, e.getMessage(), e.getStackTrace());
+    }
+  }
+
   private void cancel(MethodCall call, Result result) {
     Map<String, Object> arguments = call.arguments();
     Integer id = (Integer) arguments.get(CANCEL_ID);
@@ -1392,20 +1478,21 @@ public class FlutterLocalNotificationsPlugin
 
   private void getNotificationAppLaunchDetails(Result result) {
     Map<String, Object> notificationAppLaunchDetails = new HashMap<>();
-    String payload = null;
     Boolean notificationLaunchedApp = false;
     if (mainActivity != null) {
       Intent launchIntent = mainActivity.getIntent();
       notificationLaunchedApp =
           launchIntent != null
-              && SELECT_NOTIFICATION.equals(launchIntent.getAction())
+              && (SELECT_NOTIFICATION.equals(launchIntent.getAction())
+                  || SELECT_FOREGROUND_NOTIFICATION_ACTION.equals(launchIntent.getAction()))
               && !launchedActivityFromHistory(launchIntent);
       if (notificationLaunchedApp) {
-        payload = launchIntent.getStringExtra(PAYLOAD);
+        notificationAppLaunchDetails.put(
+            "notificationResponse", extractNotificationResponseMap(launchIntent));
       }
     }
+
     notificationAppLaunchDetails.put(NOTIFICATION_LAUNCHED_APP, notificationLaunchedApp);
-    notificationAppLaunchDetails.put(PAYLOAD, payload);
     result.success(notificationAppLaunchDetails);
   }
 
@@ -1417,13 +1504,22 @@ public class FlutterLocalNotificationsPlugin
       return;
     }
 
-    initAndroidThreeTen(applicationContext);
+    Long dispatcherHandle = LongUtils.parseLong(call.argument(DISPATCHER_HANDLE));
+    Long callbackHandle = LongUtils.parseLong(call.argument(CALLBACK_HANDLE));
+    if (dispatcherHandle != null && callbackHandle != null) {
+      new IsolatePreferences(applicationContext).saveCallbackKeys(dispatcherHandle, callbackHandle);
+    }
 
     SharedPreferences sharedPreferences =
         applicationContext.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
     SharedPreferences.Editor editor = sharedPreferences.edit();
     editor.putString(DEFAULT_ICON, defaultIcon).apply();
     result.success(true);
+  }
+
+  private void getCallbackHandle(Result result) {
+    final Long handle = new IsolatePreferences(applicationContext).getCallbackHandle();
+    result.success(handle);
   }
 
   /// Extracts the details of the notifications passed from the Flutter side and also validates that
@@ -1551,13 +1647,13 @@ public class FlutterLocalNotificationsPlugin
       alarmManager.cancel(pendingIntent);
     }
 
-    saveScheduledNotifications(applicationContext, new ArrayList<NotificationDetails>());
+    saveScheduledNotifications(applicationContext, new ArrayList<>());
     result.success(null);
   }
 
   public void requestPermission(@NonNull PermissionRequestListener callback) {
     if (permissionRequestInProgress) {
-      callback.fail("Another permission request is already in progress");
+      callback.fail(PERMISSION_REQUEST_IN_PROGRESS_ERROR_MESSAGE);
       return;
     }
 
@@ -1607,11 +1703,20 @@ public class FlutterLocalNotificationsPlugin
   }
 
   private Boolean sendNotificationPayloadMessage(Intent intent) {
-    if (SELECT_NOTIFICATION.equals(intent.getAction())) {
-      String payload = intent.getStringExtra(PAYLOAD);
-      channel.invokeMethod("selectNotification", payload);
+    if (SELECT_NOTIFICATION.equals(intent.getAction())
+        || SELECT_FOREGROUND_NOTIFICATION_ACTION.equals(intent.getAction())) {
+      Map<String, Object> notificationResponse = extractNotificationResponseMap(intent);
+      if (SELECT_FOREGROUND_NOTIFICATION_ACTION.equals(intent.getAction())) {
+        if (intent.getBooleanExtra(FlutterLocalNotificationsPlugin.CANCEL_NOTIFICATION, false)) {
+          NotificationManagerCompat.from(applicationContext)
+              .cancel(
+                  (int) notificationResponse.get(FlutterLocalNotificationsPlugin.NOTIFICATION_ID));
+        }
+      }
+      channel.invokeMethod("didReceiveNotificationResponse", notificationResponse);
       return true;
     }
+
     return false;
   }
 
@@ -1661,43 +1766,10 @@ public class FlutterLocalNotificationsPlugin
     result.success(null);
   }
 
-  private void getActiveNotifications(Result result) {
-    if (VERSION.SDK_INT < VERSION_CODES.M) {
-      result.error(
-          GET_ACTIVE_NOTIFICATIONS_ERROR_CODE, GET_ACTIVE_NOTIFICATIONS_ERROR_MESSAGE, null);
-      return;
-    }
-    NotificationManager notificationManager =
-        (NotificationManager) applicationContext.getSystemService(Context.NOTIFICATION_SERVICE);
-    try {
-      StatusBarNotification[] activeNotifications = notificationManager.getActiveNotifications();
-      List<Map<String, Object>> activeNotificationsPayload = new ArrayList<>();
-
-      for (StatusBarNotification activeNotification : activeNotifications) {
-        HashMap<String, Object> activeNotificationPayload = new HashMap<>();
-        activeNotificationPayload.put("id", activeNotification.getId());
-        Notification notification = activeNotification.getNotification();
-        if (VERSION.SDK_INT >= VERSION_CODES.O) {
-          activeNotificationPayload.put("channelId", notification.getChannelId());
-        }
-
-        activeNotificationPayload.put("groupKey", notification.getGroup());
-        activeNotificationPayload.put("tag", activeNotification.getTag());
-        activeNotificationPayload.put(
-            "title", notification.extras.getCharSequence("android.title"));
-        activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
-        activeNotificationsPayload.add(activeNotificationPayload);
-      }
-      result.success(activeNotificationsPayload);
-    } catch (Throwable e) {
-      result.error(GET_ACTIVE_NOTIFICATIONS_ERROR_CODE, e.getMessage(), e.getStackTrace());
-    }
-  }
-
   private void getActiveNotificationMessagingStyle(MethodCall call, Result result) {
     if (VERSION.SDK_INT < VERSION_CODES.M) {
       result.error(
-          GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE,
+          UNSUPPORTED_OS_VERSION_ERROR_CODE,
           "Android version must be 6.0 or newer to use getActiveNotificationMessagingStyle",
           null);
       return;
@@ -1748,7 +1820,8 @@ public class FlutterLocalNotificationsPlugin
 
       result.success(stylePayload);
     } catch (Throwable e) {
-      result.error(GET_ACTIVE_MESSAGING_STYLE_ERROR_CODE, e.getMessage(), e.getStackTrace());
+      result.error(
+          GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_ERROR_CODE, e.getMessage(), e.getStackTrace());
     }
   }
 
@@ -1867,7 +1940,7 @@ public class FlutterLocalNotificationsPlugin
   }
 
   private void startForegroundService(MethodCall call, Result result) {
-    Map<String, Object> notificationData = call.<Map<String, Object>>argument("notificationData");
+    Map<String, Object> notificationData = call.argument("notificationData");
     Integer startType = call.<Integer>argument("startType");
     ArrayList<Integer> foregroundServiceTypes = call.argument("foregroundServiceTypes");
     if (foregroundServiceTypes == null || foregroundServiceTypes.size() != 0) {
