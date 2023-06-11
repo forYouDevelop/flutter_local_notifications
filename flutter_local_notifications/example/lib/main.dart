@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -431,6 +432,14 @@ class _HomePageState extends State<HomePage> {
                           'based on local time zone',
                       onPressed: () async {
                         await _zonedScheduleNotification();
+                      },
+                    ),
+                    PaddedElevatedButton(
+                      buttonText:
+                          'Schedule notification to appear in 5 seconds '
+                          'based on local time zone using alarm clock',
+                      onPressed: () async {
+                        await _zonedScheduleAlarmClockNotification();
                       },
                     ),
                     PaddedElevatedButton(
@@ -886,7 +895,7 @@ class _HomePageState extends State<HomePage> {
                                   'Capabilities of the current system:',
                                   style: Theme.of(context)
                                       .textTheme
-                                      .subtitle1!
+                                      .titleMedium!
                                       .copyWith(fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 8),
@@ -1260,7 +1269,7 @@ class _HomePageState extends State<HomePage> {
                           priority: Priority.high,
                           importance: Importance.high,
                           fullScreenIntent: true)),
-                  androidAllowWhileIdle: true,
+                  androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
                   uiLocalNotificationDateInterpretation:
                       UILocalNotificationDateInterpretation.absoluteTime);
 
@@ -1377,7 +1386,22 @@ class _HomePageState extends State<HomePage> {
             android: AndroidNotificationDetails(
                 'your channel id', 'your channel name',
                 channelDescription: 'your channel description')),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime);
+  }
+
+  Future<void> _zonedScheduleAlarmClockNotification() async {
+    await flutterLocalNotificationsPlugin.zonedSchedule(
+        123,
+        'scheduled alarm clock title',
+        'scheduled alarm clock body',
+        tz.TZDateTime.now(tz.local).add(const Duration(seconds: 5)),
+        const NotificationDetails(
+            android: AndroidNotificationDetails(
+                'alarm_clock_channel', 'Alarm Clock Channel',
+                channelDescription: 'Alarm Clock Notification')),
+        androidScheduleMode: AndroidScheduleMode.alarmClock,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime);
   }
@@ -1683,7 +1707,7 @@ class _HomePageState extends State<HomePage> {
     final NotificationDetails notificationDetails =
         NotificationDetails(android: androidNotificationDetails);
     await flutterLocalNotificationsPlugin.show(
-        id++, 'message title', 'message body', notificationDetails);
+        id, 'message title', 'message body', notificationDetails);
 
     // wait 10 seconds and add another message to simulate another response
     await Future<void>.delayed(const Duration(seconds: 10), () async {
@@ -1813,12 +1837,13 @@ class _HomePageState extends State<HomePage> {
     const NotificationDetails notificationDetails =
         NotificationDetails(android: androidNotificationDetails);
     await flutterLocalNotificationsPlugin.periodicallyShow(
-        id++,
-        'repeating title',
-        'repeating body',
-        RepeatInterval.everyMinute,
-        notificationDetails,
-        androidAllowWhileIdle: true);
+      id++,
+      'repeating title',
+      'repeating body',
+      RepeatInterval.everyMinute,
+      notificationDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
   }
 
   Future<void> _scheduleDailyTenAMNotification() async {
@@ -1832,7 +1857,7 @@ class _HomePageState extends State<HomePage> {
               'daily notification channel name',
               channelDescription: 'daily notification description'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.time);
@@ -1850,7 +1875,7 @@ class _HomePageState extends State<HomePage> {
               'daily notification channel name',
               channelDescription: 'daily notification description'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.time);
@@ -1867,7 +1892,7 @@ class _HomePageState extends State<HomePage> {
               'weekly notification channel name',
               channelDescription: 'weekly notificationdescription'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime);
@@ -1884,7 +1909,7 @@ class _HomePageState extends State<HomePage> {
               'weekly notification channel name',
               channelDescription: 'weekly notificationdescription'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime);
@@ -1901,7 +1926,7 @@ class _HomePageState extends State<HomePage> {
               'monthly notification channel name',
               channelDescription: 'monthly notificationdescription'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.dayOfMonthAndTime);
@@ -1918,7 +1943,7 @@ class _HomePageState extends State<HomePage> {
               'yearly notification channel name',
               channelDescription: 'yearly notification description'),
         ),
-        androidAllowWhileIdle: true,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.dateAndTime);
@@ -2486,13 +2511,14 @@ class _HomePageState extends State<HomePage> {
                     'title: ${activeNotification.title}\n'
                     'body: ${activeNotification.body}',
                   ),
-                  TextButton(
-                    child: const Text('Get messaging style'),
-                    onPressed: () {
-                      _getActiveNotificationMessagingStyle(
-                          activeNotification.id, activeNotification.tag);
-                    },
-                  ),
+                  if (Platform.isAndroid && activeNotification.id != null)
+                    TextButton(
+                      child: const Text('Get messaging style'),
+                      onPressed: () {
+                        _getActiveNotificationMessagingStyle(
+                            activeNotification.id!, activeNotification.tag);
+                      },
+                    ),
                   const Divider(color: Colors.black),
                 ],
               ),
