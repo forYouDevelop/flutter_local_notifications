@@ -1134,44 +1134,51 @@ public class FlutterLocalNotificationsPlugin
   }
 
   private static void setupNotificationChannel(
-      Context context, NotificationChannelDetails notificationChannelDetails) {
-    if (VERSION.SDK_INT >= VERSION_CODES.O) {
-      NotificationManager notificationManager =
-          (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-      NotificationChannel notificationChannel =
-          new NotificationChannel(
-              notificationChannelDetails.id,
-              notificationChannelDetails.name,
-              notificationChannelDetails.importance);
-      notificationChannel.setDescription(notificationChannelDetails.description);
-      notificationChannel.setGroup(notificationChannelDetails.groupId);
-      if (notificationChannelDetails.playSound) {
-        Integer audioAttributesUsage =
-            notificationChannelDetails.audioAttributesUsage != null
-                ? notificationChannelDetails.audioAttributesUsage
-                : AudioAttributes.USAGE_NOTIFICATION;
-        AudioAttributes audioAttributes =
-            new AudioAttributes.Builder().setUsage(audioAttributesUsage).build();
-        Uri uri =
-            retrieveSoundResourceUri(
-                context, notificationChannelDetails.sound, notificationChannelDetails.soundSource);
-        notificationChannel.setSound(uri, audioAttributes);
-      } else {
-        notificationChannel.setSound(null, null);
+          Context context, NotificationChannelDetails notificationChannelDetails) {
+    try {
+      if (VERSION.SDK_INT >= VERSION_CODES.O) {
+        NotificationManager notificationManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationChannel notificationChannel =
+                new NotificationChannel(
+                        notificationChannelDetails.id,
+                        notificationChannelDetails.name,
+                        NotificationManager.IMPORTANCE_HIGH);
+        notificationChannel.setDescription(notificationChannelDetails.description);
+        notificationChannel.setGroup(notificationChannelDetails.groupId);
+        if (notificationChannelDetails.playSound) {
+          int audioAttributesUsage =
+                  notificationChannelDetails.audioAttributesUsage != null
+                          ? notificationChannelDetails.audioAttributesUsage
+                          : AudioAttributes.USAGE_NOTIFICATION;
+          AudioAttributes audioAttributes =
+                  new AudioAttributes.Builder().setUsage(audioAttributesUsage).build();
+          Uri uri =
+                  retrieveSoundResourceUri(
+                          context,
+                          notificationChannelDetails.sound,
+                          notificationChannelDetails.soundSource);
+          notificationChannel.setSound(uri, audioAttributes);
+        } else {
+          notificationChannel.setSound(null, null);
+        }
+        notificationChannel.enableVibration(
+                BooleanUtils.getValue(notificationChannelDetails.enableVibration));
+        if (notificationChannelDetails.vibrationPattern != null
+                && notificationChannelDetails.vibrationPattern.length > 0) {
+          notificationChannel.setVibrationPattern(notificationChannelDetails.vibrationPattern);
+        }
+        boolean enableLights = BooleanUtils.getValue(notificationChannelDetails.enableLights);
+        notificationChannel.enableLights(enableLights);
+        if (enableLights && notificationChannelDetails.ledColor != null) {
+          notificationChannel.setLightColor(notificationChannelDetails.ledColor);
+        }
+        notificationChannel.setShowBadge(
+                BooleanUtils.getValue(notificationChannelDetails.showBadge));
+        notificationManager.createNotificationChannel(notificationChannel);
       }
-      notificationChannel.enableVibration(
-          BooleanUtils.getValue(notificationChannelDetails.enableVibration));
-      if (notificationChannelDetails.vibrationPattern != null
-          && notificationChannelDetails.vibrationPattern.length > 0) {
-        notificationChannel.setVibrationPattern(notificationChannelDetails.vibrationPattern);
-      }
-      boolean enableLights = BooleanUtils.getValue(notificationChannelDetails.enableLights);
-      notificationChannel.enableLights(enableLights);
-      if (enableLights && notificationChannelDetails.ledColor != null) {
-        notificationChannel.setLightColor(notificationChannelDetails.ledColor);
-      }
-      notificationChannel.setShowBadge(BooleanUtils.getValue(notificationChannelDetails.showBadge));
-      notificationManager.createNotificationChannel(notificationChannel);
+    } catch (Exception e) {
+      // Do nothing
     }
   }
 
