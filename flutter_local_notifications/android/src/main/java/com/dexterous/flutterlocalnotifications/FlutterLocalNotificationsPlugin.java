@@ -237,188 +237,188 @@ public class FlutterLocalNotificationsPlugin
   protected static Notification createNotification(
       Context context, NotificationDetails notificationDetails) {
 
-      NotificationChannelDetails notificationChannelDetails =
-              NotificationChannelDetails.fromNotificationDetails(notificationDetails);
-      if (canCreateNotificationChannel(context, notificationChannelDetails)) {
-        setupNotificationChannel(context, notificationChannelDetails);
-      }
-      Intent intent = getLaunchIntent(context);
-      intent.setAction(SELECT_NOTIFICATION);
-      intent.putExtra(NOTIFICATION_ID, notificationDetails.id);
-      intent.putExtra(PAYLOAD, notificationDetails.payload);
-      int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-      if (VERSION.SDK_INT >= VERSION_CODES.M) {
-        flags |= PendingIntent.FLAG_IMMUTABLE;
-      }
-      PendingIntent pendingIntent =
-              PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
-      DefaultStyleInformation defaultStyleInformation =
-              (DefaultStyleInformation) notificationDetails.styleInformation;
-      NotificationCompat.Builder builder =
-              new NotificationCompat.Builder(context, notificationDetails.channelId)
-                      .setContentTitle(
-                              defaultStyleInformation.htmlFormatTitle
-                                      ? fromHtml(notificationDetails.title)
-                                      : notificationDetails.title)
-                      .setContentText(
-                              defaultStyleInformation.htmlFormatBody
-                                      ? fromHtml(notificationDetails.body)
-                                      : notificationDetails.body)
-                      .setTicker(notificationDetails.ticker)
-                      .setAutoCancel(BooleanUtils.getValue(notificationDetails.autoCancel))
-                      .setContentIntent(pendingIntent)
-                      .setPriority(notificationDetails.priority)
-                      .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
-                      .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
+    NotificationChannelDetails notificationChannelDetails =
+        NotificationChannelDetails.fromNotificationDetails(notificationDetails);
+    if (canCreateNotificationChannel(context, notificationChannelDetails)) {
+      setupNotificationChannel(context, notificationChannelDetails);
+    }
+    Intent intent = getLaunchIntent(context);
+    intent.setAction(SELECT_NOTIFICATION);
+    intent.putExtra(NOTIFICATION_ID, notificationDetails.id);
+    intent.putExtra(PAYLOAD, notificationDetails.payload);
+    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+    if (VERSION.SDK_INT >= VERSION_CODES.M) {
+      flags |= PendingIntent.FLAG_IMMUTABLE;
+    }
+    PendingIntent pendingIntent =
+        PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
+    DefaultStyleInformation defaultStyleInformation =
+        (DefaultStyleInformation) notificationDetails.styleInformation;
+    NotificationCompat.Builder builder =
+        new NotificationCompat.Builder(context, notificationDetails.channelId)
+            .setContentTitle(
+                defaultStyleInformation.htmlFormatTitle
+                    ? fromHtml(notificationDetails.title)
+                    : notificationDetails.title)
+            .setContentText(
+                defaultStyleInformation.htmlFormatBody
+                    ? fromHtml(notificationDetails.body)
+                    : notificationDetails.body)
+            .setTicker(notificationDetails.ticker)
+            .setAutoCancel(BooleanUtils.getValue(notificationDetails.autoCancel))
+            .setContentIntent(pendingIntent)
+            .setPriority(notificationDetails.priority)
+            .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
+            .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
 
-      if (notificationDetails.actions != null) {
-        // Space out request codes by 16 so even with 16 actions they won't clash
-        int requestCode = notificationDetails.id * 16;
-        for (NotificationAction action : notificationDetails.actions) {
-          IconCompat icon = null;
-          if (!TextUtils.isEmpty(action.icon) && action.iconSource != null) {
-            icon = getIconFromSource(context, action.icon, action.iconSource);
-          }
-
-          Intent actionIntent;
-          if (action.showsUserInterface != null && action.showsUserInterface) {
-            actionIntent = getLaunchIntent(context);
-            actionIntent.setAction(SELECT_FOREGROUND_NOTIFICATION_ACTION);
-          } else {
-            actionIntent = new Intent(context, ActionBroadcastReceiver.class);
-            actionIntent.setAction(ActionBroadcastReceiver.ACTION_TAPPED);
-          }
-
-          actionIntent
-                  .putExtra(NOTIFICATION_ID, notificationDetails.id)
-                  .putExtra(ACTION_ID, action.id)
-                  .putExtra(CANCEL_NOTIFICATION, action.cancelNotification)
-                  .putExtra(PAYLOAD, notificationDetails.payload);
-          int actionFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-          if (action.actionInputs == null || action.actionInputs.isEmpty()) {
-            if (VERSION.SDK_INT >= VERSION_CODES.M) {
-              actionFlags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-          } else {
-            if (VERSION.SDK_INT >= VERSION_CODES.S) {
-              actionFlags |= PendingIntent.FLAG_MUTABLE;
-            }
-          }
-
-          @SuppressLint("UnspecifiedImmutableFlag") final PendingIntent actionPendingIntent =
-                  action.showsUserInterface != null && action.showsUserInterface
-                          ? PendingIntent.getActivity(context, requestCode++, actionIntent, actionFlags)
-                          : PendingIntent.getBroadcast(context, requestCode++, actionIntent, actionFlags);
-
-          final Spannable actionTitleSpannable = new SpannableString(action.title);
-          if (action.titleColor != null) {
-            actionTitleSpannable.setSpan(
-                    new ForegroundColorSpan(action.titleColor), 0, actionTitleSpannable.length(), 0);
-          }
-
-          Builder actionBuilder = new Builder(icon, actionTitleSpannable, actionPendingIntent);
-
-          if (action.contextual != null) {
-            actionBuilder.setContextual(action.contextual);
-          }
-          if (action.showsUserInterface != null) {
-            actionBuilder.setShowsUserInterface(action.showsUserInterface);
-          }
-          if (action.allowGeneratedReplies != null) {
-            actionBuilder.setAllowGeneratedReplies(action.allowGeneratedReplies);
-          }
-
-          if (action.actionInputs != null) {
-            for (NotificationActionInput input : action.actionInputs) {
-              RemoteInput.Builder remoteInput =
-                      new RemoteInput.Builder(INPUT_RESULT).setLabel(input.label);
-              if (input.allowFreeFormInput != null) {
-                remoteInput.setAllowFreeFormInput(input.allowFreeFormInput);
-              }
-
-              if (input.allowedMimeTypes != null) {
-                for (String mimeType : input.allowedMimeTypes) {
-                  remoteInput.setAllowDataType(mimeType, true);
-                }
-              }
-              if (input.choices != null) {
-                remoteInput.setChoices(input.choices.toArray(new CharSequence[]{}));
-              }
-              actionBuilder.addRemoteInput(remoteInput.build());
-            }
-          }
-          builder.addAction(actionBuilder.build());
+    if (notificationDetails.actions != null) {
+      // Space out request codes by 16 so even with 16 actions they won't clash
+      int requestCode = notificationDetails.id * 16;
+      for (NotificationAction action : notificationDetails.actions) {
+        IconCompat icon = null;
+        if (!TextUtils.isEmpty(action.icon) && action.iconSource != null) {
+          icon = getIconFromSource(context, action.icon, action.iconSource);
         }
-      }
 
-      try {
-          setSmallIcon(context, notificationDetails, builder);
-          builder.setLargeIcon(
-                  getBitmapFromSource(
-                          context, notificationDetails.largeIcon, notificationDetails.largeIconBitmapSource));
-          if (notificationDetails.color != null) {
-              builder.setColor(notificationDetails.color.intValue());
+        Intent actionIntent;
+        if (action.showsUserInterface != null && action.showsUserInterface) {
+          actionIntent = getLaunchIntent(context);
+          actionIntent.setAction(SELECT_FOREGROUND_NOTIFICATION_ACTION);
+        } else {
+          actionIntent = new Intent(context, ActionBroadcastReceiver.class);
+          actionIntent.setAction(ActionBroadcastReceiver.ACTION_TAPPED);
+        }
+
+        actionIntent
+            .putExtra(NOTIFICATION_ID, notificationDetails.id)
+            .putExtra(ACTION_ID, action.id)
+            .putExtra(CANCEL_NOTIFICATION, action.cancelNotification)
+            .putExtra(PAYLOAD, notificationDetails.payload);
+        int actionFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (action.actionInputs == null || action.actionInputs.isEmpty()) {
+          if (VERSION.SDK_INT >= VERSION_CODES.M) {
+            actionFlags |= PendingIntent.FLAG_IMMUTABLE;
           }
-      } catch (Exception e) {
-          //DO nothing
-      }
-
-      if (notificationDetails.colorized != null) {
-        builder.setColorized(notificationDetails.colorized);
-      }
-
-      if (notificationDetails.showWhen != null) {
-        builder.setShowWhen(BooleanUtils.getValue(notificationDetails.showWhen));
-      }
-
-      if (notificationDetails.when != null) {
-        builder.setWhen(notificationDetails.when);
-      }
-
-      if (notificationDetails.usesChronometer != null) {
-        builder.setUsesChronometer(notificationDetails.usesChronometer);
-      }
-
-      if (notificationDetails.chronometerCountDown != null) {
-        if (VERSION.SDK_INT >= VERSION_CODES.N) {
-          builder.setChronometerCountDown(notificationDetails.chronometerCountDown);
+        } else {
+          if (VERSION.SDK_INT >= VERSION_CODES.S) {
+            actionFlags |= PendingIntent.FLAG_MUTABLE;
+          }
         }
-      }
 
-      if (BooleanUtils.getValue(notificationDetails.fullScreenIntent)) {
-        builder.setFullScreenIntent(pendingIntent, true);
-      }
+        @SuppressLint("UnspecifiedImmutableFlag")
+        final PendingIntent actionPendingIntent =
+            action.showsUserInterface != null && action.showsUserInterface
+                ? PendingIntent.getActivity(context, requestCode++, actionIntent, actionFlags)
+                : PendingIntent.getBroadcast(context, requestCode++, actionIntent, actionFlags);
 
-      if (!StringUtils.isNullOrEmpty(notificationDetails.shortcutId)) {
-        builder.setShortcutId(notificationDetails.shortcutId);
-      }
-
-      if (!StringUtils.isNullOrEmpty(notificationDetails.subText)) {
-        builder.setSubText(notificationDetails.subText);
-      }
-
-      if (notificationDetails.number != null) {
-        builder.setNumber(notificationDetails.number);
-      }
-
-      setVisibility(notificationDetails, builder);
-      applyGrouping(notificationDetails, builder);
-      setSound(context, notificationDetails, builder);
-      setVibrationPattern(notificationDetails, builder);
-      setLights(notificationDetails, builder);
-      setStyle(context, notificationDetails, builder);
-      setProgress(notificationDetails, builder);
-      setCategory(notificationDetails, builder);
-      setTimeoutAfter(notificationDetails, builder);
-      Notification notification = builder.build();
-      if (notificationDetails.additionalFlags != null
-              && notificationDetails.additionalFlags.length > 0) {
-        for (int additionalFlag : notificationDetails.additionalFlags) {
-          notification.flags |= additionalFlag;
+        final Spannable actionTitleSpannable = new SpannableString(action.title);
+        if (action.titleColor != null) {
+          actionTitleSpannable.setSpan(
+              new ForegroundColorSpan(action.titleColor), 0, actionTitleSpannable.length(), 0);
         }
-      }
-      return notification;
 
+        Builder actionBuilder = new Builder(icon, actionTitleSpannable, actionPendingIntent);
+
+        if (action.contextual != null) {
+          actionBuilder.setContextual(action.contextual);
+        }
+        if (action.showsUserInterface != null) {
+          actionBuilder.setShowsUserInterface(action.showsUserInterface);
+        }
+        if (action.allowGeneratedReplies != null) {
+          actionBuilder.setAllowGeneratedReplies(action.allowGeneratedReplies);
+        }
+
+        if (action.actionInputs != null) {
+          for (NotificationActionInput input : action.actionInputs) {
+            RemoteInput.Builder remoteInput =
+                new RemoteInput.Builder(INPUT_RESULT).setLabel(input.label);
+            if (input.allowFreeFormInput != null) {
+              remoteInput.setAllowFreeFormInput(input.allowFreeFormInput);
+            }
+
+            if (input.allowedMimeTypes != null) {
+              for (String mimeType : input.allowedMimeTypes) {
+                remoteInput.setAllowDataType(mimeType, true);
+              }
+            }
+            if (input.choices != null) {
+              remoteInput.setChoices(input.choices.toArray(new CharSequence[] {}));
+            }
+            actionBuilder.addRemoteInput(remoteInput.build());
+          }
+        }
+        builder.addAction(actionBuilder.build());
+      }
+    }
+
+    try {
+      setSmallIcon(context, notificationDetails, builder);
+      builder.setLargeIcon(
+          getBitmapFromSource(
+              context, notificationDetails.largeIcon, notificationDetails.largeIconBitmapSource));
+      if (notificationDetails.color != null) {
+        builder.setColor(notificationDetails.color.intValue());
+      }
+    } catch (Exception e) {
+      // DO nothing
+    }
+
+    if (notificationDetails.colorized != null) {
+      builder.setColorized(notificationDetails.colorized);
+    }
+
+    if (notificationDetails.showWhen != null) {
+      builder.setShowWhen(BooleanUtils.getValue(notificationDetails.showWhen));
+    }
+
+    if (notificationDetails.when != null) {
+      builder.setWhen(notificationDetails.when);
+    }
+
+    if (notificationDetails.usesChronometer != null) {
+      builder.setUsesChronometer(notificationDetails.usesChronometer);
+    }
+
+    if (notificationDetails.chronometerCountDown != null) {
+      if (VERSION.SDK_INT >= VERSION_CODES.N) {
+        builder.setChronometerCountDown(notificationDetails.chronometerCountDown);
+      }
+    }
+
+    if (BooleanUtils.getValue(notificationDetails.fullScreenIntent)) {
+      builder.setFullScreenIntent(pendingIntent, true);
+    }
+
+    if (!StringUtils.isNullOrEmpty(notificationDetails.shortcutId)) {
+      builder.setShortcutId(notificationDetails.shortcutId);
+    }
+
+    if (!StringUtils.isNullOrEmpty(notificationDetails.subText)) {
+      builder.setSubText(notificationDetails.subText);
+    }
+
+    if (notificationDetails.number != null) {
+      builder.setNumber(notificationDetails.number);
+    }
+
+    setVisibility(notificationDetails, builder);
+    applyGrouping(notificationDetails, builder);
+    setSound(context, notificationDetails, builder);
+    setVibrationPattern(notificationDetails, builder);
+    setLights(notificationDetails, builder);
+    setStyle(context, notificationDetails, builder);
+    setProgress(notificationDetails, builder);
+    setCategory(notificationDetails, builder);
+    setTimeoutAfter(notificationDetails, builder);
+    Notification notification = builder.build();
+    if (notificationDetails.additionalFlags != null
+        && notificationDetails.additionalFlags.length > 0) {
+      for (int additionalFlag : notificationDetails.additionalFlags) {
+        notification.flags |= additionalFlag;
+      }
+    }
+    return notification;
   }
 
   private static Boolean canCreateNotificationChannel(
@@ -446,27 +446,28 @@ public class FlutterLocalNotificationsPlugin
       Context context,
       NotificationDetails notificationDetails,
       NotificationCompat.Builder builder) {
-      try {
-          if (!StringUtils.isNullOrEmpty(notificationDetails.icon)) {
-              builder.setSmallIcon(getDrawableResourceId(context, notificationDetails.icon));
-          } else {
-              SharedPreferences sharedPreferences =
-                      context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
-              String defaultIcon = sharedPreferences.getString(DEFAULT_ICON, null);
-              if (StringUtils.isNullOrEmpty(defaultIcon)) {
-                  // for backwards compatibility: this is for handling the old way references to the icon used
-                  // to be kept but should be removed in future
-                  if (notificationDetails.iconResourceId != null) {
-                      builder.setSmallIcon(notificationDetails.iconResourceId);
-                  }
-
-              } else {
-                  builder.setSmallIcon(getDrawableResourceId(context, defaultIcon));
-              }
+    try {
+      if (!StringUtils.isNullOrEmpty(notificationDetails.icon)) {
+        builder.setSmallIcon(getDrawableResourceId(context, notificationDetails.icon));
+      } else {
+        SharedPreferences sharedPreferences =
+            context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
+        String defaultIcon = sharedPreferences.getString(DEFAULT_ICON, null);
+        if (StringUtils.isNullOrEmpty(defaultIcon)) {
+          // for backwards compatibility: this is for handling the old way references to the icon
+          // used
+          // to be kept but should be removed in future
+          if (notificationDetails.iconResourceId != null) {
+            builder.setSmallIcon(notificationDetails.iconResourceId);
           }
-      } catch (Exception e) {
-          //DO nothing
+
+        } else {
+          builder.setSmallIcon(getDrawableResourceId(context, defaultIcon));
+        }
       }
+    } catch (Exception e) {
+      // DO nothing
+    }
   }
 
   @NonNull
