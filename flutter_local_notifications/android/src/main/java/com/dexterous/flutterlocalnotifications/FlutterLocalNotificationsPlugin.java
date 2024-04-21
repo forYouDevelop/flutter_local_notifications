@@ -1,5 +1,7 @@
 package com.dexterous.flutterlocalnotifications;
 
+import static android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -34,6 +36,7 @@ import android.util.Log;
 
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.AlarmManagerCompat;
 import androidx.core.app.NotificationCompat;
@@ -111,12 +114,16 @@ public class FlutterLocalNotificationsPlugin
     implements MethodCallHandler,
         PluginRegistry.NewIntentListener,
         PluginRegistry.RequestPermissionsResultListener,
+        PluginRegistry.ActivityResultListener,
         FlutterPlugin,
         ActivityAware {
 
   static final String PAYLOAD = "payload";
   static final String NOTIFICATION_ID = "notificationId";
   static final String CANCEL_NOTIFICATION = "cancelNotification";
+
+  private static final String TAG = "FLTLocalNotifPlugin";
+
   private static final String SHARED_PREFERENCES_KEY = "notification_plugin_cache";
   private static final String DISPATCHER_HANDLE = "dispatcher_handle";
   private static final String CALLBACK_HANDLE = "callback_handle";
@@ -147,14 +154,14 @@ public class FlutterLocalNotificationsPlugin
   private static final String SHOW_METHOD = "show";
   private static final String CANCEL_METHOD = "cancel";
   private static final String CANCEL_ALL_METHOD = "cancelAll";
-  private static final String SCHEDULE_METHOD = "schedule";
   private static final String ZONED_SCHEDULE_METHOD = "zonedSchedule";
   private static final String PERIODICALLY_SHOW_METHOD = "periodicallyShow";
-  private static final String SHOW_DAILY_AT_TIME_METHOD = "showDailyAtTime";
-  private static final String SHOW_WEEKLY_AT_DAY_AND_TIME_METHOD = "showWeeklyAtDayAndTime";
   private static final String GET_NOTIFICATION_APP_LAUNCH_DETAILS_METHOD =
       "getNotificationAppLaunchDetails";
-  private static final String REQUEST_PERMISSION_METHOD = "requestPermission";
+  private static final String REQUEST_NOTIFICATIONS_PERMISSION_METHOD =
+      "requestNotificationsPermission";
+  private static final String REQUEST_EXACT_ALARMS_PERMISSION_METHOD =
+      "requestExactAlarmsPermission";
   private static final String METHOD_CHANNEL = "dexterous.com/flutter/local_notifications";
   private static final String INVALID_ICON_ERROR_CODE = "invalid_icon";
   private static final String INVALID_LARGE_ICON_ERROR_CODE = "invalid_large_icon";
@@ -194,8 +201,12 @@ public class FlutterLocalNotificationsPlugin
   private Context applicationContext;
   private Activity mainActivity;
   static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 1;
+
+  static final int EXACT_ALARM_PERMISSION_REQUEST_CODE = 2;
+
   private PermissionRequestListener callback;
-  private boolean permissionRequestInProgress = false;
+
+  private PermissionRequestProgress permissionRequestProgress = PermissionRequestProgress.None;
 
   static void rescheduleNotifications(Context context) {
     ArrayList<NotificationDetails> scheduledNotifications = loadScheduledNotifications(context);
@@ -209,8 +220,7 @@ public class FlutterLocalNotificationsPlugin
           scheduleNotification(context, notificationDetails, false);
         }
       } catch (ExactAlarmPermissionException e) {
-        // TODO: update tag used to match name of class
-        Log.e("notification", e.getMessage());
+        Log.e(TAG, e.getMessage());
         removeNotificationFromCache(context, notificationDetails.id);
       }
     }
@@ -228,8 +238,7 @@ public class FlutterLocalNotificationsPlugin
         removeNotificationFromCache(context, notificationDetails.id);
       }
     } catch (ExactAlarmPermissionException e) {
-      // TODO: update tag used to match name of class
-      Log.e("notification", e.getMessage());
+      Log.e(TAG, e.getMessage());
       removeNotificationFromCache(context, notificationDetails.id);
     }
   }
@@ -269,6 +278,7 @@ public class FlutterLocalNotificationsPlugin
             .setContentIntent(pendingIntent)
             .setPriority(notificationDetails.priority)
             .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
+            .setSilent(BooleanUtils.getValue(notificationDetails.silent))
             .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
 
     if (notificationDetails.actions != null) {
@@ -536,6 +546,8 @@ public class FlutterLocalNotificationsPlugin
     }
   }
 
+  // This is left to support old apps need this done when a notification is rescheduled and used the
+  // deprecated schedule() method of the plugin
   private static void scheduleNotification(
       Context context,
       final NotificationDetails notificationDetails,
@@ -596,6 +608,13 @@ public class FlutterLocalNotificationsPlugin
     PendingIntent pendingIntent =
         getBroadcastPendingIntent(context, notificationDetails.id, notificationIntent);
     AlarmManager alarmManager = getAlarmManager(context);
+    if (notificationDetails.scheduleMode == null) {
+      // This is to account for notifications created in older versions prior to allowWhileIdle
+      // being added to the deserialiser.
+      // Reference to old behaviour:
+      // https://github.com/MaikuB/flutter_local_notifications/blob/4b723e750d1371206520b10a122a444c4bba7475/flutter_local_notifications/android/src/main/java/com/dexterous/flutterlocalnotifications/FlutterLocalNotificationsPlugin.java#L569C37-L569C37
+      notificationDetails.scheduleMode = ScheduleMode.exactAllowWhileIdle;
+    }
 
     setupAllowWhileIdleAlarm(
         notificationDetails, alarmManager, notificationTriggerTime, pendingIntent);
@@ -667,6 +686,14 @@ public class FlutterLocalNotificationsPlugin
         getBroadcastPendingIntent(context, notificationDetails.id, notificationIntent);
     AlarmManager alarmManager = getAlarmManager(context);
 
+    if (notificationDetails.scheduleMode == null) {
+      // This is to account for notifications created in older versions prior to allowWhileIdle
+      // being added to the deserialiser.
+      // Reference to old behaviour:
+      // https://github.com/MaikuB/flutter_local_notifications/blob/4b723e750d1371206520b10a122a444c4bba7475/flutter_local_notifications/android/src/main/java/com/dexterous/flutterlocalnotifications/FlutterLocalNotificationsPlugin.java#L642
+      notificationDetails.scheduleMode = ScheduleMode.inexact;
+    }
+
     if (notificationDetails.scheduleMode.useAllowWhileIdle()) {
       setupAllowWhileIdleAlarm(
           notificationDetails, alarmManager, notificationTriggerTime, pendingIntent);
@@ -685,6 +712,15 @@ public class FlutterLocalNotificationsPlugin
       AlarmManager alarmManager,
       long epochMilli,
       PendingIntent pendingIntent) {
+
+    if (notificationDetails.scheduleMode == null) {
+      // This is to account for notifications created in older versions prior to allowWhileIdle
+      // being added to the deserialiser.
+      // Reference to old behaviour:
+      // https://github.com/MaikuB/flutter_local_notifications/blob/4b723e750d1371206520b10a122a444c4bba7475/flutter_local_notifications/android/src/main/java/com/dexterous/flutterlocalnotifications/FlutterLocalNotificationsPlugin.java#L515
+      notificationDetails.scheduleMode = ScheduleMode.exact;
+    }
+
     if (notificationDetails.scheduleMode.useAllowWhileIdle()) {
       setupAllowWhileIdleAlarm(notificationDetails, alarmManager, epochMilli, pendingIntent);
     } else {
@@ -693,6 +729,7 @@ public class FlutterLocalNotificationsPlugin
         AlarmManagerCompat.setExact(
             alarmManager, AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
       } else if (notificationDetails.scheduleMode.useAlarmClock()) {
+        checkCanScheduleExactAlarms(alarmManager);
         AlarmManagerCompat.setAlarmClock(alarmManager, epochMilli, pendingIntent, pendingIntent);
       } else {
         alarmManager.set(AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
@@ -710,6 +747,7 @@ public class FlutterLocalNotificationsPlugin
       AlarmManagerCompat.setExactAndAllowWhileIdle(
           alarmManager, AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
     } else if (notificationDetails.scheduleMode.useAlarmClock()) {
+      checkCanScheduleExactAlarms(alarmManager);
       AlarmManagerCompat.setAlarmClock(alarmManager, epochMilli, pendingIntent, pendingIntent);
     } else {
       AlarmManagerCompat.setAndAllowWhileIdle(
@@ -1347,6 +1385,8 @@ public class FlutterLocalNotificationsPlugin
   public void onAttachedToActivity(ActivityPluginBinding binding) {
     binding.addOnNewIntentListener(this);
     binding.addRequestPermissionsResultListener(this);
+    binding.addActivityResultListener(this);
+
     mainActivity = binding.getActivity();
     Intent mainActivityIntent = mainActivity.getIntent();
     if (!launchedActivityFromHistory(mainActivityIntent)) {
@@ -1367,6 +1407,7 @@ public class FlutterLocalNotificationsPlugin
   public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) {
     binding.addOnNewIntentListener(this);
     binding.addRequestPermissionsResultListener(this);
+    binding.addActivityResultListener(this);
     mainActivity = binding.getActivity();
   }
 
@@ -1390,14 +1431,25 @@ public class FlutterLocalNotificationsPlugin
       case SHOW_METHOD:
         show(call, result);
         break;
-      case SCHEDULE_METHOD:
-        schedule(call, result);
-        break;
       case ZONED_SCHEDULE_METHOD:
         zonedSchedule(call, result);
         break;
-      case REQUEST_PERMISSION_METHOD:
-        requestPermission(
+      case REQUEST_NOTIFICATIONS_PERMISSION_METHOD:
+        requestNotificationsPermission(
+            new PermissionRequestListener() {
+              @Override
+              public void complete(boolean granted) {
+                result.success(granted);
+              }
+
+              @Override
+              public void fail(String message) {
+                result.error(PERMISSION_REQUEST_IN_PROGRESS_ERROR_CODE, message, null);
+              }
+            });
+        break;
+      case REQUEST_EXACT_ALARMS_PERMISSION_METHOD:
+        requestExactAlarmsPermission(
             new PermissionRequestListener() {
               @Override
               public void complete(boolean granted) {
@@ -1411,8 +1463,6 @@ public class FlutterLocalNotificationsPlugin
             });
         break;
       case PERIODICALLY_SHOW_METHOD:
-      case SHOW_DAILY_AT_TIME_METHOD:
-      case SHOW_WEEKLY_AT_DAY_AND_TIME_METHOD:
         repeat(call, result);
         break;
       case CANCEL_METHOD:
@@ -1503,11 +1553,16 @@ public class FlutterLocalNotificationsPlugin
         activeNotificationPayload.put(
             "title", notification.extras.getCharSequence("android.title"));
         activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
+        activeNotificationPayload.put(
+            "bigText", notification.extras.getCharSequence("android.bigText"));
         activeNotificationsPayload.add(activeNotificationPayload);
       }
       result.success(activeNotificationsPayload);
     } catch (Throwable e) {
-      result.error(UNSUPPORTED_OS_VERSION_ERROR_CODE, e.getMessage(), e.getStackTrace());
+      result.error(
+          UNSUPPORTED_OS_VERSION_ERROR_CODE,
+          e.getMessage(),
+          android.util.Log.getStackTraceString(e));
     }
   }
 
@@ -1524,18 +1579,6 @@ public class FlutterLocalNotificationsPlugin
     if (notificationDetails != null) {
       try {
         repeatNotification(applicationContext, notificationDetails, true);
-        result.success(null);
-      } catch (PluginException e) {
-        result.error(e.code, e.getMessage(), null);
-      }
-    }
-  }
-
-  private void schedule(MethodCall call, Result result) {
-    NotificationDetails notificationDetails = extractNotificationDetails(result, call.arguments());
-    if (notificationDetails != null) {
-      try {
-        scheduleNotification(applicationContext, notificationDetails, true);
         result.success(null);
       } catch (PluginException e) {
         result.error(e.code, e.getMessage(), null);
@@ -1614,7 +1657,7 @@ public class FlutterLocalNotificationsPlugin
     result.success(handle);
   }
 
-  /// Extracts the details of the notifications passed from the Flutter side and also validates that
+  // Extracts the details of the notifications passed from the Flutter side and also validates that
   // some of the details (especially resources) passed are valid
   private NotificationDetails extractNotificationDetails(
       Result result, Map<String, Object> arguments) {
@@ -1743,8 +1786,8 @@ public class FlutterLocalNotificationsPlugin
     result.success(null);
   }
 
-  public void requestPermission(@NonNull PermissionRequestListener callback) {
-    if (permissionRequestInProgress) {
+  public void requestNotificationsPermission(@NonNull PermissionRequestListener callback) {
+    if (permissionRequestProgress != PermissionRequestProgress.None) {
       callback.fail(PERMISSION_REQUEST_IN_PROGRESS_ERROR_MESSAGE);
       return;
     }
@@ -1758,12 +1801,12 @@ public class FlutterLocalNotificationsPlugin
               == PackageManager.PERMISSION_GRANTED;
 
       if (!permissionGranted) {
-        permissionRequestInProgress = true;
+        permissionRequestProgress = PermissionRequestProgress.RequestingNotificationPermission;
         ActivityCompat.requestPermissions(
             mainActivity, new String[] {permission}, NOTIFICATION_PERMISSION_REQUEST_CODE);
       } else {
         this.callback.complete(true);
-        permissionRequestInProgress = false;
+        permissionRequestProgress = PermissionRequestProgress.None;
       }
     } else {
       NotificationManagerCompat notificationManager = NotificationManagerCompat.from(mainActivity);
@@ -1771,14 +1814,43 @@ public class FlutterLocalNotificationsPlugin
     }
   }
 
+  public void requestExactAlarmsPermission(@NonNull PermissionRequestListener callback) {
+    if (permissionRequestProgress != PermissionRequestProgress.None) {
+      callback.fail(PERMISSION_REQUEST_IN_PROGRESS_ERROR_MESSAGE);
+      return;
+    }
+
+    this.callback = callback;
+
+    if (Build.VERSION.SDK_INT >= VERSION_CODES.S) {
+      AlarmManager alarmManager = getAlarmManager(applicationContext);
+      boolean permissionGranted = alarmManager.canScheduleExactAlarms();
+
+      if (!permissionGranted) {
+        permissionRequestProgress = PermissionRequestProgress.RequestingExactAlarmsPermission;
+        mainActivity.startActivityForResult(
+            new Intent(
+                ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:" + applicationContext.getPackageName())),
+            EXACT_ALARM_PERMISSION_REQUEST_CODE);
+      } else {
+        this.callback.complete(true);
+        permissionRequestProgress = PermissionRequestProgress.None;
+      }
+    } else {
+      this.callback.complete(true);
+    }
+  }
+
   @Override
   public boolean onRequestPermissionsResult(
       int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-    if (permissionRequestInProgress && requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
+    if (permissionRequestProgress == PermissionRequestProgress.RequestingNotificationPermission
+        && requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
       boolean granted =
           grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
       callback.complete(granted);
-      permissionRequestInProgress = false;
+      permissionRequestProgress = PermissionRequestProgress.None;
       return granted;
     } else {
       return false;
@@ -1917,7 +1989,9 @@ public class FlutterLocalNotificationsPlugin
       result.success(stylePayload);
     } catch (Throwable e) {
       result.error(
-          GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_ERROR_CODE, e.getMessage(), e.getStackTrace());
+          GET_ACTIVE_NOTIFICATION_MESSAGING_STYLE_ERROR_CODE,
+          e.getMessage(),
+          android.util.Log.getStackTraceString(e));
     }
   }
 
@@ -1978,7 +2052,10 @@ public class FlutterLocalNotificationsPlugin
       }
       result.success(channelsPayload);
     } catch (Throwable e) {
-      result.error(GET_NOTIFICATION_CHANNELS_ERROR_CODE, e.getMessage(), e.getStackTrace());
+      result.error(
+          GET_NOTIFICATION_CHANNELS_ERROR_CODE,
+          e.getMessage(),
+          android.util.Log.getStackTraceString(e));
     }
   }
 
@@ -2023,6 +2100,7 @@ public class FlutterLocalNotificationsPlugin
       channelPayload.put("vibrationPattern", channel.getVibrationPattern());
       channelPayload.put("enableLights", channel.shouldShowLights());
       channelPayload.put("ledColor", channel.getLightColor());
+      channelPayload.put("audioAttributesUsage", channel.getAudioAttributes().getUsage());
     }
     return channelPayload;
   }
@@ -2088,6 +2166,24 @@ public class FlutterLocalNotificationsPlugin
     }
   }
 
+  @Override
+  public boolean onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+    if (requestCode != NOTIFICATION_PERMISSION_REQUEST_CODE
+        && requestCode != EXACT_ALARM_PERMISSION_REQUEST_CODE) {
+      return false;
+    }
+
+    if (permissionRequestProgress == PermissionRequestProgress.RequestingExactAlarmsPermission
+        && requestCode == EXACT_ALARM_PERMISSION_REQUEST_CODE
+        && VERSION.SDK_INT >= VERSION_CODES.S) {
+      AlarmManager alarmManager = getAlarmManager(applicationContext);
+      this.callback.complete(alarmManager.canScheduleExactAlarms());
+      permissionRequestProgress = PermissionRequestProgress.None;
+    }
+
+    return true;
+  }
+
   private static class PluginException extends RuntimeException {
     public final String code;
 
@@ -2101,5 +2197,11 @@ public class FlutterLocalNotificationsPlugin
     public ExactAlarmPermissionException() {
       super(EXACT_ALARMS_PERMISSION_ERROR_CODE, "Exact alarms are not permitted");
     }
+  }
+
+  enum PermissionRequestProgress {
+    None,
+    RequestingNotificationPermission,
+    RequestingExactAlarmsPermission
   }
 }
