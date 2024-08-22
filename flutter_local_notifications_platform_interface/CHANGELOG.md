@@ -1,3 +1,10 @@
+## [vNext]
+
+* **Breaking change** Bumped minimum Flutter SDK requirement to 3.13
+
+## [7.2.0]
+
+* Added `periodicallyShowWithDuration()` and corresponding `validateRepeatDurationInterval()` helper method to ensure duration is at least a minute
 
 ## [7.1.0]
 
